@@ -4,7 +4,8 @@ Hyper-realistic, AI-powered remote technical interviewer — a desktop app where
 lip-synced 3D avatar interviews you live, you answer with your mic, solve tasks in a
 real code editor, and get a scored report at the end.
 
-**Website & downloads:** [mockpulse-web](https://github.com/Bolu-Tife-dev/mockpulse-web)
+**Website:** [mockpulse-web.vercel.app](https://mockpulse-web.vercel.app)
+· **Site source:** [mockpulse-web](https://github.com/Bolu-Tife-dev/mockpulse-web)
 · **Releases:** [Latest release](https://github.com/Bolu-Tife-dev/mockpulse-ai-app/releases/latest)
 
 ## Download
