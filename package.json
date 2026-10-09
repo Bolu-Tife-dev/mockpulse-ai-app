@@ -69,13 +69,18 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "MockPulse AI"
+      "shortcutName": "MockPulse AI",
+      "artifactName": "MockPulse-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "MockPulse-Portable.${ext}"
     },
     "mac": {
       "target": [
         "dmg",
         "zip"
       ],
+      "artifactName": "MockPulse-Setup.${ext}",
       "icon": "build/icon.png",
       "category": "public.app-category.education",
       "hardenedRuntime": false
@@ -86,6 +91,7 @@
         "deb",
         "tar.gz"
       ],
+      "artifactName": "MockPulse-Setup.${ext}",
       "icon": "build",
       "category": "Education",
       "maintainer": "MockPulse AI <contact@mockpulse.ai>"
@@ -93,8 +99,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "mockpulse",
-        "repo": "mockpulse-ai"
+        "owner": "Bolu-Tife-dev",
+        "repo": "mockpulse-ai-app"
       }
     ]
   }
