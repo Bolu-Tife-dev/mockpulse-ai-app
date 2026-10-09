@@ -1,7 +1,7 @@
 {
   "name": "mockpulse-ai",
   "productName": "MockPulse AI",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Hyper-realistic AI-powered remote technical interviewer desktop app.",
   "author": "MockPulse AI <contact@mockpulse.ai>",
   "license": "MIT",
