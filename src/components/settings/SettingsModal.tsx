@@ -3,10 +3,9 @@ import Modal from '@/components/ui/Modal';
 import { useSettingsStore, type KeyStatus } from '@/store/settingsStore';
 import { useUiStore } from '@/store/uiStore';
 import { listVoices, loadVoices, tts } from '@/services/speech';
+import { resolveSecret } from '@/services/ai/client';
+import { DEFAULT_MODELS, fetchLiveModels, modelOptions, type ModelOption } from '@/services/ai/models';
 import type { LLMProvider, STTEngine, TTSEngine } from '@/types';
-
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
-const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
 
 const KEY_HINTS: Record<'gemini' | 'groq', { label: string; url: string; placeholder: string }> = {
   gemini: {
@@ -97,8 +96,48 @@ export default function SettingsModal() {
     void loadVoices().then((v) => setVoices(v.length ? v : listVoices()));
   }, [open]);
 
-  const models = provider === 'groq' ? GROQ_MODELS : GEMINI_MODELS;
   const status = keyStatus[provider];
+  const curated = useMemo(() => modelOptions(provider), [provider]);
+  const [liveIds, setLiveIds] = useState<string[] | null>(null);
+  const [modelsChecked, setModelsChecked] = useState(false);
+
+  /* Ask the provider what this key may actually call. The curated list is only
+     a floor — anything retired vanishes from the dropdown automatically. */
+  useEffect(() => {
+    if (!open) {
+      setLiveIds(null);
+      setModelsChecked(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const key = await resolveSecret(provider);
+      const ids = key ? await fetchLiveModels(provider, key) : null;
+      if (cancelled) return;
+      setLiveIds(ids);
+      setModelsChecked(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, provider, status]);
+
+  const models: ModelOption[] = useMemo(() => {
+    const merged = [...curated];
+    for (const id of liveIds ?? []) {
+      if (!merged.some((o) => o.id === id)) merged.push({ id, label: id, note: 'on your key' });
+    }
+    return merged;
+  }, [curated, liveIds]);
+
+  /* Reconcile a stale saved pick (retired model) once the real list is known. */
+  useEffect(() => {
+    if (!modelsChecked || models.some((o) => o.id === settings.model)) return;
+    const fallback = DEFAULT_MODELS[provider];
+    void update(
+      provider === 'groq' ? { model: fallback, groqModel: fallback } : { model: fallback, geminiModel: fallback },
+    );
+  }, [modelsChecked, models, settings.model, provider, update]);
 
   const voiceOptions = useMemo(
     () =>
@@ -266,11 +305,18 @@ export default function SettingsModal() {
               }}
             >
               {models.map((m) => (
-                <option key={m} value={m} className="bg-night-950">
-                  {m}
+                <option key={m.id} value={m.id} className="bg-night-950">
+                  {m.label}
+                  {m.id !== m.label ? ` · ${m.id}` : ''}
+                  {m.note ? ` — ${m.note}` : ''}
                 </option>
               ))}
             </select>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+              {liveIds
+                ? `${liveIds.length} chat models available on your key · refreshed from the provider`
+                : 'Curated current models — save an API key to refresh this list live.'}
+            </p>
           </div>
           <div>
             <label className="label" htmlFor="temp">

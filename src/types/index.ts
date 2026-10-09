@@ -75,8 +75,8 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: 'gemini',
-  model: 'gemini-2.5-flash',
-  geminiModel: 'gemini-2.5-flash',
+  model: 'gemini-3.8-flash',
+  geminiModel: 'gemini-3.8-flash',
   groqModel: 'llama-3.3-70b-versatile',
   sttEngine: 'webspeech',
   ttsEngine: 'webspeech',

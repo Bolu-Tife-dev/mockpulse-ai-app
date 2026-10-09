@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { DEFAULT_SETTINGS, type AppSettings } from '@/types';
 import { deleteSecret, resolveSecret, storeSecret } from '@/services/ai/client';
+import { DEFAULT_MODELS } from '@/services/ai/models';
 
 export type KeyStatus = 'unknown' | 'checking' | 'valid' | 'invalid' | 'missing';
 
@@ -18,15 +19,16 @@ interface SettingsState {
   resetAll(): Promise<void>;
 }
 
-async function probeKey(account: 'gemini' | 'groq', settings: AppSettings): Promise<KeyStatus> {
+async function probeKey(account: 'gemini' | 'groq'): Promise<KeyStatus> {
   const key = await resolveSecret(account);
   if (!key) return 'missing';
 
   try {
     if (account === 'gemini') {
-      const model = settings.model || settings.geminiModel;
+      // Probe a known-current model on purpose: the user's saved pick may be
+      // retired, and a missing model must never be reported as a rejected key.
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}?key=${encodeURIComponent(key)}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODELS.gemini}?key=${encodeURIComponent(key)}`,
       );
       return res.ok ? 'valid' : res.status === 400 || res.status === 403 ? 'invalid' : 'valid';
     }
@@ -91,7 +93,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const trimmed = value.trim();
     if (!trimmed) return;
     await storeSecret(account, trimmed);
-    const status = await probeKey(account, get().settings);
+    const status = await probeKey(account);
     set((s) => ({ keyStatus: { ...s.keyStatus, [account]: status } }));
   },
 
@@ -102,7 +104,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   async testKey(account) {
     set((s) => ({ keyStatus: { ...s.keyStatus, [account]: 'checking' } }));
-    const status = await probeKey(account, get().settings);
+    const status = await probeKey(account);
     set((s) => ({ keyStatus: { ...s.keyStatus, [account]: status } }));
     return status;
   },

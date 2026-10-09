@@ -1,10 +1,14 @@
 import type { AppSettings, LLMProvider } from '@/types';
+import { DEFAULT_MODELS, modelIds } from './models';
 
 export class AIError extends Error {
   constructor(
     message: string,
     readonly status?: number,
     readonly provider?: LLMProvider,
+    /** Raw provider message, without any local decoration — used for
+     *  classification so our own "(model: …)" suffix can't skew matching. */
+    readonly detail?: string,
   ) {
     super(message);
     this.name = 'AIError';
@@ -30,6 +34,54 @@ export interface LLMClient {
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const GROQ_BASE = 'https://api.groq.com/openai/v1';
+
+/** The provider rejected the model itself (retired, renamed or access-limited). */
+function isModelUnavailable(err: AIError): boolean {
+  if (!err.status || err.status === 401 || err.status === 403) return false;
+  if (err.status !== 400 && err.status !== 404 && err.status !== 410) return false;
+  const text = err.detail ?? err.message;
+  return /(model|not found|no longer|decommission|deprecated|unsupported|does not exist|not available|not supported)/i.test(
+    text,
+  );
+}
+
+/** The model is fine but refuses JSON-mode, so we retry and parse prose instead. */
+function isJsonModeUnsupported(err: AIError): boolean {
+  if (err.status !== 400) return false;
+  const text = err.detail ?? err.message;
+  return /(response_format|response_mime|json_object|json mode|structured output|does not support)/i.test(text);
+}
+
+/**
+ * Runs `request`, falling back to the provider default when the selected model
+ * has been retired/restricted, and dropping JSON-mode when a model rejects it.
+ * Settings are left untouched — the Settings dialog reconciles the list itself.
+ */
+async function withModelFallbacks(
+  provider: LLMProvider,
+  preferredModel: string,
+  json: boolean,
+  request: (model: string, json: boolean) => Promise<CompletionResult>,
+): Promise<CompletionResult> {
+  let model = preferredModel || DEFAULT_MODELS[provider];
+  let wantJson = json;
+  const fallback = DEFAULT_MODELS[provider];
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await request(model, wantJson);
+    } catch (err) {
+      if (err instanceof AIError && model !== fallback && isModelUnavailable(err)) {
+        model = fallback;
+      } else if (err instanceof AIError && wantJson && isJsonModeUnsupported(err)) {
+        wantJson = false;
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw new AIError(`${provider}: no compatible model available. Try another model in Settings.`, 400, provider);
+}
 
 /** Persisted secrets come from the Electron keychain; a `VITE_` fallback lets
  *  `npm run dev` work in a plain browser tab. */
@@ -73,15 +125,26 @@ function apiKeyFor(settings: AppSettings): Promise<string | null> {
 
 class GeminiClient implements LLMClient {
   readonly provider = 'gemini' as const;
-  readonly availableModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  readonly availableModels = modelIds('gemini');
 
   constructor(private readonly settings: AppSettings) {}
 
   async complete(messages: ChatRole[], opts: { json?: boolean; signal?: AbortSignal } = {}): Promise<CompletionResult> {
+    const preferred = this.settings.model || this.settings.geminiModel || DEFAULT_MODELS.gemini;
+    return withModelFallbacks(this.provider, preferred, !!opts.json, (model, json) =>
+      this.request(messages, opts, model, json),
+    );
+  }
+
+  private async request(
+    messages: ChatRole[],
+    opts: { json?: boolean; signal?: AbortSignal },
+    model: string,
+    json: boolean,
+  ): Promise<CompletionResult> {
     const key = await apiKeyFor(this.settings);
     if (!key) throw new AIError('Missing Google Gemini API key. Open Settings and paste your free key.', 401, 'gemini');
 
-    const model = this.settings.model || this.settings.geminiModel;
     const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const history = messages.filter((m) => m.role !== 'system');
 
@@ -96,7 +159,7 @@ class GeminiClient implements LLMClient {
       generationConfig: {
         temperature: this.settings.temperature,
         maxOutputTokens: 4096,
-        ...(opts.json ? { responseMimeType: 'application/json' } : {}),
+        ...(json ? { responseMimeType: 'application/json' } : {}),
       },
     };
 
@@ -111,12 +174,9 @@ class GeminiClient implements LLMClient {
     const latencyMs = Math.round(performance.now() - started);
 
     if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new AIError(
-        `Gemini ${res.status}: ${extractErrorMessage(detail) || res.statusText}`,
-        res.status,
-        'gemini',
-      );
+      const body = await res.text().catch(() => '');
+      const reason = extractErrorMessage(body) || res.statusText;
+      throw new AIError(`Gemini ${res.status}: ${reason} (model: ${model})`, res.status, 'gemini', reason);
     }
 
     const data = await res.json();
@@ -133,15 +193,26 @@ class GeminiClient implements LLMClient {
 
 class GroqClient implements LLMClient {
   readonly provider = 'groq' as const;
-  readonly availableModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
+  readonly availableModels = modelIds('groq');
 
   constructor(private readonly settings: AppSettings) {}
 
   async complete(messages: ChatRole[], opts: { json?: boolean; signal?: AbortSignal } = {}): Promise<CompletionResult> {
+    const preferred = this.settings.model || this.settings.groqModel || DEFAULT_MODELS.groq;
+    return withModelFallbacks(this.provider, preferred, !!opts.json, (model, json) =>
+      this.request(messages, opts, model, json),
+    );
+  }
+
+  private async request(
+    messages: ChatRole[],
+    opts: { json?: boolean; signal?: AbortSignal },
+    model: string,
+    json: boolean,
+  ): Promise<CompletionResult> {
     const key = await apiKeyFor(this.settings);
     if (!key) throw new AIError('Missing Groq API key. Open Settings and paste your free key.', 401, 'groq');
 
-    const model = this.settings.model || this.settings.groqModel;
     const started = performance.now();
 
     const res = await fetch(`${GROQ_BASE}/chat/completions`, {
@@ -155,7 +226,7 @@ class GroqClient implements LLMClient {
         temperature: this.settings.temperature,
         max_tokens: 4096,
         messages,
-        ...(opts.json
+        ...(json
           ? { response_format: { type: 'json_object' } }
           : {}),
       }),
@@ -165,8 +236,9 @@ class GroqClient implements LLMClient {
     const latencyMs = Math.round(performance.now() - started);
 
     if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new AIError(`Groq ${res.status}: ${extractErrorMessage(detail) || res.statusText}`, res.status, 'groq');
+      const body = await res.text().catch(() => '');
+      const reason = extractErrorMessage(body) || res.statusText;
+      throw new AIError(`Groq ${res.status}: ${reason} (model: ${model})`, res.status, 'groq', reason);
     }
 
     const data = await res.json();
